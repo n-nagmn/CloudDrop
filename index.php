@@ -214,18 +214,51 @@ $baseUrl = $protocol . "://" . $host . rtrim($currentDir, '/') . "/uploads/";
             fileInfo.style.display = 'block';
         }
 
-        // コピー機能
+        // コピー機能（HTTPフォールバック対応）
         document.querySelectorAll('.copy-btn').forEach(btn => {
-            btn.addEventListener('click', async () => {
+            btn.addEventListener('click', () => {
                 const url = btn.getAttribute('data-url');
-                try {
-                    await navigator.clipboard.writeText(url);
-                    showToast();
-                } catch (err) {
-                    console.error('Failed to copy: ', err);
-                }
+                copyToClipboard(url);
             });
         });
+
+        function copyToClipboard(text) {
+            // モダンなブラウザ (HTTPS)
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(text).then(() => {
+                    showToast();
+                }).catch(err => {
+                    console.error('Clipboard API error:', err);
+                    fallbackCopy(text);
+                });
+            } else {
+                // フォールバック (HTTP)
+                fallbackCopy(text);
+            }
+        }
+
+        function fallbackCopy(text) {
+            const textArea = document.createElement("textarea");
+            textArea.value = text;
+            
+            // 画面外に配置
+            textArea.style.position = "fixed";
+            textArea.style.left = "-9999px";
+            textArea.style.top = "0";
+            document.body.appendChild(textArea);
+            
+            textArea.focus();
+            textArea.select();
+
+            try {
+                const successful = document.execCommand('copy');
+                if (successful) showToast();
+            } catch (err) {
+                console.error('Fallback copy error:', err);
+            }
+
+            document.body.removeChild(textArea);
+        }
 
         function showToast() {
             toast.classList.add('show');
