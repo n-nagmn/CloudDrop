@@ -22,6 +22,30 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["action"]) && $_POST["
     }
 }
 
+// ファイル名前変更処理
+if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["action"]) && $_POST["action"] === "rename") {
+    $filename = basename($_POST["filename"]);
+    $new_filename = basename($_POST["new_filename"]);
+    
+    if ($new_filename !== "") {
+        $oldFilePath = $uploadDir . $filename;
+        $newFilePath = $uploadDir . $new_filename;
+        
+        if (file_exists($oldFilePath) && !file_exists($newFilePath)) {
+            if (rename($oldFilePath, $newFilePath)) {
+                $message = "ファイル名を「" . htmlspecialchars($new_filename) . "」に変更しました。";
+                $status = "success";
+            } else {
+                $message = "ファイル名の変更に失敗しました。";
+                $status = "error";
+            }
+        } else {
+            $message = "ファイルが存在しないか、同じ名前のファイルが既に存在します。";
+            $status = "error";
+        }
+    }
+}
+
 // ファイルアップロード処理
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_FILES["file"])) {
     $file = $_FILES["file"];
@@ -134,9 +158,19 @@ $baseUrl = $protocol . "://" . $host . rtrim($currentDir, '/') . "/uploads/";
                                 foreach ($fileDetails as $f): 
                                     $fileUrl = $baseUrl . rawurlencode($f['name']);
                                 ?>
+                                <?php
+                                    $isImage = preg_match('/\.(jpg|jpeg|png|gif|webp)$/i', $f['name']);
+                                ?>
                                     <tr>
                                         <td class="file-name">
-                                            <i class="far fa-file"></i> <?php echo htmlspecialchars($f['name']); ?>
+                                            <?php if ($isImage): ?>
+                                                <a href="<?php echo htmlspecialchars($fileUrl); ?>" target="_blank" title="新しいタブで画像を開く" class="thumbnail-link">
+                                                    <img src="<?php echo htmlspecialchars($fileUrl); ?>" class="thumbnail" alt="<?php echo htmlspecialchars($f['name']); ?>">
+                                                </a>
+                                            <?php else: ?>
+                                                <i class="far fa-file"></i>
+                                            <?php endif; ?>
+                                            <span><?php echo htmlspecialchars($f['name']); ?></span>
                                         </td>
                                         <td><?php echo formatBytes($f['size']); ?></td>
                                         <td><?php echo date("Y/m/d H:i", $f['time']); ?></td>
@@ -148,6 +182,14 @@ $baseUrl = $protocol . "://" . $host . rtrim($currentDir, '/') . "/uploads/";
                                                 <button class="btn-icon copy-btn" data-url="<?php echo $fileUrl; ?>" title="リンクをコピー">
                                                     <i class="fas fa-link"></i>
                                                 </button>
+                                                <form action="" method="post" onsubmit="return handleRename(this, '<?php echo htmlspecialchars($f['name'], ENT_QUOTES); ?>');" style="display:inline;">
+                                                    <input type="hidden" name="action" value="rename">
+                                                    <input type="hidden" name="filename" value="<?php echo htmlspecialchars($f['name']); ?>">
+                                                    <input type="hidden" name="new_filename" class="new-filename-input" value="">
+                                                    <button type="submit" class="btn-icon rename-btn" title="名前変更">
+                                                        <i class="fas fa-edit"></i>
+                                                    </button>
+                                                </form>
                                                 <form action="" method="post" onsubmit="return confirm('本当に削除しますか？');" style="display:inline;">
                                                     <input type="hidden" name="action" value="delete">
                                                     <input type="hidden" name="filename" value="<?php echo htmlspecialchars($f['name']); ?>">
@@ -265,6 +307,15 @@ $baseUrl = $protocol . "://" . $host . rtrim($currentDir, '/') . "/uploads/";
             setTimeout(() => {
                 toast.classList.remove('show');
             }, 2000);
+        }
+
+        function handleRename(form, oldName) {
+            const newName = prompt('新しいファイル名を入力してください:', oldName);
+            if (newName !== null && newName.trim() !== '' && newName !== oldName) {
+                form.querySelector('.new-filename-input').value = newName.trim();
+                return true;
+            }
+            return false;
         }
     </script>
 </body>

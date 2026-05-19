@@ -187,6 +187,24 @@ header {
     color: var(--text-muted);
 }
 
+.thumbnail {
+    width: 40px;
+    height: 40px;
+    object-fit: cover;
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+    transition: opacity 0.2s;
+}
+
+.thumbnail:hover {
+    opacity: 0.8;
+}
+
+.thumbnail-link {
+    display: inline-block;
+    vertical-align: middle;
+}
+
 .actions {
     width: 120px;
 }
