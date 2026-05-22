@@ -107,8 +107,8 @@ header {
 }
 
 .file-info {
-    margin-top: 1rem;
-    padding: 0.5rem 1rem;
+    margin: 1rem auto 0;
+    padding: 0.4rem 1rem;
     background: #eef2ff;
     border-radius: 2rem;
     font-size: 0.875rem;
@@ -117,6 +117,7 @@ header {
     align-items: center;
     justify-content: center;
     gap: 0.5rem;
+    width: fit-content;
 }
 
 .remove-file-btn {
@@ -129,13 +130,11 @@ header {
     align-items: center;
     justify-content: center;
     transition: opacity 0.2s;
-    width: 14px;
-    height: 14px;
     opacity: 0.7;
 }
 
 .remove-file-btn i {
-    font-size: 12px !important;
+    font-size: 15px !important;
     line-height: 1 !important;
 }
 
