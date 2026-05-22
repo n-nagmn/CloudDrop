@@ -46,15 +46,34 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["action"]) && $_POST["
     }
 }
 
-// ファイルアップロード処理
-if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_FILES["file"])) {
-    $file = $_FILES["file"];
-    $targetPath = $uploadDir . basename($file["name"]);
-    
-    if (move_uploaded_file($file["tmp_name"], $targetPath)) {
-        $message = "ファイル「" . htmlspecialchars($file["name"]) . "」をアップロードしました。";
+// ファイルアップロード処理（複数対応）
+if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_FILES["files"])) {
+    $files = $_FILES["files"];
+    $uploadedCount = 0;
+    $errors = 0;
+
+    // files[] が配列であることを想定
+    if (isset($files["name"]) && is_array($files["name"])) {
+        $fileCount = count($files["name"]);
+        for ($i = 0; $i < $fileCount; $i++) {
+            if ($files["error"][$i] === UPLOAD_ERR_OK) {
+                $targetPath = $uploadDir . basename($files["name"][$i]);
+                if (move_uploaded_file($files["tmp_name"][$i], $targetPath)) {
+                    $uploadedCount++;
+                } else {
+                    $errors++;
+                }
+            } else if ($files["error"][$i] !== UPLOAD_ERR_NO_FILE) {
+                $errors++;
+            }
+        }
+    }
+
+    if ($uploadedCount > 0) {
+        $message = $uploadedCount . "件のファイルをアップロードしました。";
+        if ($errors > 0) $message .= "（" . $errors . "件失敗）";
         $status = "success";
-    } else {
+    } else if ($errors > 0) {
         $message = "アップロードに失敗しました。";
         $status = "error";
     }
@@ -98,11 +117,11 @@ $baseUrl = $protocol . "://" . $host . rtrim($currentDir, '/') . "/uploads/";
                         <div class="drop-zone-content">
                             <i class="fas fa-cloud-upload-alt"></i>
                             <p>ファイルをドラッグ＆ドロップするか、<br><span>クリックして選択</span></p>
-                            <input type="file" name="file" id="file-input" required>
+                            <input type="file" name="files[]" id="file-input" multiple style="display: none;">
                         </div>
-                        <div id="file-info" class="file-info"></div>
+                        <div id="file-list-container" class="file-list-container"></div>
                     </div>
-                    <button type="submit" class="btn-primary">
+                    <button type="submit" class="btn-primary" id="upload-btn" style="display: none;">
                         <i class="fas fa-arrow-up"></i> アップロード開始
                     </button>
                 </form>
@@ -219,14 +238,21 @@ $baseUrl = $protocol . "://" . $host . rtrim($currentDir, '/') . "/uploads/";
     <script>
         const dropZone = document.getElementById('drop-zone');
         const fileInput = document.getElementById('file-input');
-        const fileInfo = document.getElementById('file-info');
+        const fileListContainer = document.getElementById('file-list-container');
+        const uploadBtn = document.getElementById('upload-btn');
         const toast = document.getElementById('toast');
 
-        dropZone.addEventListener('click', () => fileInput.click());
+        let selectedFiles = [];
+
+        dropZone.addEventListener('click', (e) => {
+            if (e.target.closest('.remove-file-btn')) return;
+            fileInput.click();
+        });
 
         fileInput.addEventListener('change', () => {
             if (fileInput.files.length > 0) {
-                updateFileInfo(fileInput.files[0]);
+                handleFiles(Array.from(fileInput.files));
+                fileInput.value = ''; 
             }
         });
 
@@ -246,38 +272,34 @@ $baseUrl = $protocol . "://" . $host . rtrim($currentDir, '/') . "/uploads/";
             dropZone.classList.remove('drag-over');
             
             if (e.dataTransfer.files.length > 0) {
-                fileInput.files = e.dataTransfer.files;
-                updateFileInfo(e.dataTransfer.files[0]);
+                handleFiles(Array.from(e.dataTransfer.files));
             } else {
-                // Handling web images (dragged from another page)
                 const html = e.dataTransfer.getData('text/html');
                 const match = html && html.match(/src="([^"]+)"/);
                 const url = match ? match[1] : e.dataTransfer.getData('text/uri-list');
 
                 if (url && url.startsWith('http')) {
-                    fetchImageAndSetToInput(url);
+                    fetchImageAndAddToList(url);
                 }
             }
         });
 
-        // クリップボードからの貼り付け (Ctrl+V) 対応
         window.addEventListener('paste', (e) => {
             const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+            let pastedFiles = [];
             for (let i = 0; i < items.length; i++) {
                 if (items[i].type.indexOf('image') !== -1) {
                     const blob = items[i].getAsFile();
-                    const file = new File([blob], `pasted-image-${Date.now()}.png`, { type: blob.type });
-                    
-                    const dataTransfer = new DataTransfer();
-                    dataTransfer.items.add(file);
-                    fileInput.files = dataTransfer.files;
-                    updateFileInfo(file);
-                    break;
+                    const file = new File([blob], `pasted-image-${Date.now()}-${i}.png`, { type: blob.type });
+                    pastedFiles.push(file);
                 }
+            }
+            if (pastedFiles.length > 0) {
+                handleFiles(pastedFiles);
             }
         });
 
-        async function fetchImageAndSetToInput(url) {
+        async function fetchImageAndAddToList(url) {
             try {
                 const response = await fetch(url);
                 const blob = await response.blob();
@@ -287,43 +309,59 @@ $baseUrl = $protocol . "://" . $host . rtrim($currentDir, '/') . "/uploads/";
                     fileName += `.${ext}`;
                 }
                 const file = new File([blob], fileName, { type: blob.type });
-
-                const dataTransfer = new DataTransfer();
-                dataTransfer.items.add(file);
-                fileInput.files = dataTransfer.files;
-                updateFileInfo(file);
+                handleFiles([file]);
             } catch (err) {
                 console.error('Error fetching web image:', err);
-                // CORSなどで取得できない場合はユーザーに通知
-                alert('Web画像の直接取得に失敗しました。画像を一度保存してからドラッグしてください。');
+                alert('Web画像の直接取得に失敗しました。');
             }
         }
 
-        function updateFileInfo(file) {
-            fileInfo.innerHTML = `
-                <span>選択中: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)</span>
-                <button type="button" class="remove-file-btn" id="remove-file-btn" title="選択解除">
-                    <i class="fas fa-times-circle"></i>
-                </button>
-            `;
-            
-            // style.cssのFlexboxレイアウトを適用
-            fileInfo.style.cssText = 'display: flex;';
+        function handleFiles(files) {
+            // 重複チェックは簡易的に名前とサイズで行う
+            const newFiles = files.filter(file => 
+                !selectedFiles.some(s => s.name === file.name && s.size === file.size)
+            );
+            selectedFiles = [...selectedFiles, ...newFiles];
+            renderFileList();
+        }
 
-            const removeBtn = document.getElementById('remove-file-btn');
-            removeBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                clearFileInput();
+        function renderFileList() {
+            if (selectedFiles.length === 0) {
+                fileListContainer.style.display = 'none';
+                fileListContainer.innerHTML = '';
+                uploadBtn.style.display = 'none';
+                return;
+            }
+
+            fileListContainer.innerHTML = '';
+            selectedFiles.forEach((file, index) => {
+                const badge = document.createElement('div');
+                badge.className = 'file-info-badge';
+                badge.innerHTML = `
+                    <span>${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)</span>
+                    <i class="fas fa-times-circle remove-file-btn" title="削除"></i>
+                `;
+                badge.querySelector('.remove-file-btn').onclick = (e) => {
+                    e.stopPropagation();
+                    selectedFiles.splice(index, 1);
+                    renderFileList();
+                };
+                fileListContainer.appendChild(badge);
             });
+            
+            fileListContainer.style.display = 'flex';
+            uploadBtn.style.display = 'flex';
         }
 
-        function clearFileInput() {
-            fileInput.value = '';
-            fileInfo.style.display = 'none';
-            fileInfo.innerHTML = '';
-        }
+        document.getElementById('upload-form').onsubmit = function(e) {
+            if (selectedFiles.length === 0) return false;
+            
+            const dataTransfer = new DataTransfer();
+            selectedFiles.forEach(file => dataTransfer.items.add(file));
+            fileInput.files = dataTransfer.files;
+            return true;
+        };
 
-        // コピー機能（HTTPフォールバック対応）
         document.querySelectorAll('.copy-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 const url = btn.getAttribute('data-url');
@@ -332,7 +370,6 @@ $baseUrl = $protocol . "://" . $host . rtrim($currentDir, '/') . "/uploads/";
         });
 
         function copyToClipboard(text) {
-            // モダンなブラウザ (HTTPS)
             if (navigator.clipboard && window.isSecureContext) {
                 navigator.clipboard.writeText(text).then(() => {
                     showToast();
@@ -341,7 +378,6 @@ $baseUrl = $protocol . "://" . $host . rtrim($currentDir, '/') . "/uploads/";
                     fallbackCopy(text);
                 });
             } else {
-                // フォールバック (HTTP)
                 fallbackCopy(text);
             }
         }
@@ -349,23 +385,18 @@ $baseUrl = $protocol . "://" . $host . rtrim($currentDir, '/') . "/uploads/";
         function fallbackCopy(text) {
             const textArea = document.createElement("textarea");
             textArea.value = text;
-            
-            // 画面外に配置
             textArea.style.position = "fixed";
             textArea.style.left = "-9999px";
             textArea.style.top = "0";
             document.body.appendChild(textArea);
-            
             textArea.focus();
             textArea.select();
-
             try {
                 const successful = document.execCommand('copy');
                 if (successful) showToast();
             } catch (err) {
                 console.error('Fallback copy error:', err);
             }
-
             document.body.removeChild(textArea);
         }
 
