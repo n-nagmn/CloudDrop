@@ -300,17 +300,35 @@ $baseUrl = $protocol . "://" . $host . rtrim($currentDir, '/') . "/uploads/";
         }
 
         function updateFileInfo(file) {
+            // CSSキャッシュを完全に無視し、確実に文字の真横へ配置するためインラインスタイルを使用
             fileInfo.innerHTML = `
                 <span>選択中: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)</span>
-                <button type="button" class="remove-file-btn" id="remove-file-btn" title="選択解除">
-                    <i class="fas fa-times-circle"></i>
-                </button>
+                <i class="fas fa-times-circle" id="remove-file-btn" title="選択解除" style="color: #ef4444; cursor: pointer; font-size: 18px; margin-left: 5px;"></i>
             `;
-            fileInfo.style.display = 'flex';
+            
+            // Flexboxを使用して強制的に横並び中央揃え
+            fileInfo.style.display = 'inline-flex';
+            fileInfo.style.alignItems = 'center';
+            fileInfo.style.justifyContent = 'center';
+            fileInfo.style.background = '#eef2ff';
+            fileInfo.style.padding = '0.5rem 1.2rem';
+            fileInfo.style.borderRadius = '2rem';
+            fileInfo.style.marginTop = '1rem';
+            fileInfo.style.color = '#4f46e5';
+            fileInfo.style.fontSize = '0.875rem';
+            fileInfo.style.width = 'auto'; // 横幅をコンテンツに合わせる
 
-            document.getElementById('remove-file-btn').addEventListener('click', (e) => {
+            const removeBtn = document.getElementById('remove-file-btn');
+            removeBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 clearFileInput();
+            });
+            
+            removeBtn.addEventListener('mouseenter', () => {
+                removeBtn.style.opacity = '0.8';
+            });
+            removeBtn.addEventListener('mouseleave', () => {
+                removeBtn.style.opacity = '1';
             });
         }
 
