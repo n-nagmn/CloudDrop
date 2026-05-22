@@ -300,28 +300,20 @@ $baseUrl = $protocol . "://" . $host . rtrim($currentDir, '/') . "/uploads/";
         }
 
         function updateFileInfo(file) {
-            // 余計なスタイル変更（色など）を排除し、vertical-alignで文字の真横（上下中央）に配置
             fileInfo.innerHTML = `
-                <span style="vertical-align: middle;">選択中: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)</span>
-                <button type="button" id="remove-file-btn" title="選択解除" style="background: none; border: none; padding: 0; margin-left: 6px; cursor: pointer; vertical-align: middle; color: inherit;">
-                    <i class="fas fa-times-circle" style="font-size: 1.1em; vertical-align: middle; opacity: 0.7; transition: opacity 0.2s;"></i>
+                <span>選択中: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)</span>
+                <button type="button" class="remove-file-btn" id="remove-file-btn" title="選択解除">
+                    <i class="fas fa-times-circle"></i>
                 </button>
             `;
             
-            // Flexboxではなく元のインラインブロック表示に戻す
-            fileInfo.style.cssText = 'display: inline-block;';
+            // style.cssのFlexboxレイアウトを適用
+            fileInfo.style.cssText = 'display: flex;';
 
             const removeBtn = document.getElementById('remove-file-btn');
             removeBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 clearFileInput();
-            });
-            
-            removeBtn.addEventListener('mouseenter', () => {
-                removeBtn.querySelector('i').style.opacity = '1';
-            });
-            removeBtn.addEventListener('mouseleave', () => {
-                removeBtn.querySelector('i').style.opacity = '0.7';
             });
         }
 

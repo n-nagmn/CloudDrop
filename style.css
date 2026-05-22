@@ -107,13 +107,41 @@ header {
 }
 
 .file-info {
-    margin-top: 1rem;
+    margin: 1rem auto 0;
     padding: 0.5rem 1rem;
     background: #eef2ff;
     border-radius: 2rem;
     font-size: 0.875rem;
     color: var(--primary-color);
-    display: none;
+    display: none; /* Controlled by JS */
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    width: max-content;
+    max-width: 100%;
+}
+
+.remove-file-btn {
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+    height: 100%;
+}
+
+.remove-file-btn:hover {
+    opacity: 1;
+}
+
+.remove-file-btn i {
+    font-size: 1.25em;
+    display: block;
 }
 
 .btn-primary {
