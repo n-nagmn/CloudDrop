@@ -248,8 +248,56 @@ $baseUrl = $protocol . "://" . $host . rtrim($currentDir, '/') . "/uploads/";
             if (e.dataTransfer.files.length > 0) {
                 fileInput.files = e.dataTransfer.files;
                 updateFileInfo(e.dataTransfer.files[0]);
+            } else {
+                // Handling web images (dragged from another page)
+                const html = e.dataTransfer.getData('text/html');
+                const match = html && html.match(/src="([^"]+)"/);
+                const url = match ? match[1] : e.dataTransfer.getData('text/uri-list');
+
+                if (url && url.startsWith('http')) {
+                    fetchImageAndSetToInput(url);
+                }
             }
         });
+
+        // クリップボードからの貼り付け (Ctrl+V) 対応
+        window.addEventListener('paste', (e) => {
+            const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+            for (let i = 0; i < items.length; i++) {
+                if (items[i].type.indexOf('image') !== -1) {
+                    const blob = items[i].getAsFile();
+                    const file = new File([blob], `pasted-image-${Date.now()}.png`, { type: blob.type });
+                    
+                    const dataTransfer = new DataTransfer();
+                    dataTransfer.items.add(file);
+                    fileInput.files = dataTransfer.files;
+                    updateFileInfo(file);
+                    break;
+                }
+            }
+        });
+
+        async function fetchImageAndSetToInput(url) {
+            try {
+                const response = await fetch(url);
+                const blob = await response.blob();
+                let fileName = url.split('/').pop().split('?')[0] || `web-image-${Date.now()}`;
+                if (!fileName.includes('.')) {
+                    const ext = blob.type.split('/')[1] || 'png';
+                    fileName += `.${ext}`;
+                }
+                const file = new File([blob], fileName, { type: blob.type });
+
+                const dataTransfer = new DataTransfer();
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                updateFileInfo(file);
+            } catch (err) {
+                console.error('Error fetching web image:', err);
+                // CORSなどで取得できない場合はユーザーに通知
+                alert('Web画像の直接取得に失敗しました。画像を一度保存してからドラッグしてください。');
+            }
+        }
 
         function updateFileInfo(file) {
             fileInfo.textContent = `選択中: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`;
