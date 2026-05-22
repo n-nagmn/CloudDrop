@@ -335,18 +335,20 @@ $baseUrl = $protocol . "://" . $host . rtrim($currentDir, '/') . "/uploads/";
 
             fileListContainer.innerHTML = '';
             selectedFiles.forEach((file, index) => {
-                const badge = document.createElement('div');
-                badge.className = 'file-info-badge';
-                badge.innerHTML = `
-                    <span>${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)</span>
-                    <i class="fas fa-times-circle remove-file-btn" title="削除"></i>
+                const item = document.createElement('div');
+                item.className = 'file-info'; // 好評だった元のスタイルを再利用
+                item.innerHTML = `
+                    <span>選択中: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)</span>
+                    <button type="button" class="remove-file-btn" title="削除">
+                        <i class="fas fa-times-circle"></i>
+                    </button>
                 `;
-                badge.querySelector('.remove-file-btn').onclick = (e) => {
+                item.querySelector('.remove-file-btn').onclick = (e) => {
                     e.stopPropagation();
                     selectedFiles.splice(index, 1);
                     renderFileList();
                 };
-                fileListContainer.appendChild(badge);
+                fileListContainer.appendChild(item);
             });
             
             fileListContainer.style.display = 'flex';

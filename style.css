@@ -106,39 +106,52 @@ header {
     display: none;
 }
 
+/* 複数ファイル表示用のコンテナ */
 .file-list-container {
-    margin-top: 1.5rem;
     display: none;
     flex-direction: column;
-    align-items: center;
-    gap: 0.75rem;
+    gap: 0.5rem;
     width: 100%;
+    margin-top: 1rem;
 }
 
-.file-info-badge {
-    padding: 0.2rem 0.6rem;
+/* 以前好評だったスタイルに戻す */
+.file-info {
+    margin: 0 auto;
+    padding: 0.5rem 1rem;
+    background: #eef2ff;
+    border-radius: 2rem;
     font-size: 0.875rem;
     color: var(--primary-color);
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 0.4rem;
-    width: fit-content;
-    max-width: 95%;
+    gap: 0.5rem;
+    width: max-content;
+    max-width: 100%;
 }
 
 .remove-file-btn {
-    color: var(--error);
+    background: none;
+    border: none;
+    color: inherit;
     cursor: pointer;
-    font-size: 1rem;
-    opacity: 0.7;
-    transition: opacity 0.2s;
+    padding: 0;
     display: flex;
     align-items: center;
+    justify-content: center;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+    height: 100%;
 }
 
 .remove-file-btn:hover {
     opacity: 1;
+}
+
+.remove-file-btn i {
+    font-size: 1.25em;
+    display: block;
 }
 
 .btn-primary {
