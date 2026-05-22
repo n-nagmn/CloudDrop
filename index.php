@@ -1,11 +1,14 @@
 <?php
+session_start();
+
 $uploadDir = "uploads/";
 if (!is_dir($uploadDir)) {
     mkdir($uploadDir, 0777, true);
 }
 
-$message = "";
-$status = "";
+$message = isset($_SESSION['message']) ? $_SESSION['message'] : "";
+$status = isset($_SESSION['status']) ? $_SESSION['status'] : "";
+unset($_SESSION['message'], $_SESSION['status']);
 
 // ファイル削除処理
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["action"]) && $_POST["action"] === "delete") {
@@ -13,13 +16,15 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["action"]) && $_POST["
     $filePath = $uploadDir . $filename;
     if (file_exists($filePath)) {
         if (unlink($filePath)) {
-            $message = "ファイル「" . htmlspecialchars($filename) . "」を削除しました。";
-            $status = "success";
+            $_SESSION['message'] = "ファイル「" . htmlspecialchars($filename) . "」を削除しました。";
+            $_SESSION['status'] = "success";
         } else {
-            $message = "ファイルの削除に失敗しました。";
-            $status = "error";
+            $_SESSION['message'] = "ファイルの削除に失敗しました。";
+            $_SESSION['status'] = "error";
         }
     }
+    header("Location: " . $_SERVER['PHP_SELF']);
+    exit;
 }
 
 // ファイル名前変更処理
@@ -33,17 +38,19 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["action"]) && $_POST["
         
         if (file_exists($oldFilePath) && !file_exists($newFilePath)) {
             if (rename($oldFilePath, $newFilePath)) {
-                $message = "ファイル名を「" . htmlspecialchars($new_filename) . "」に変更しました。";
-                $status = "success";
+                $_SESSION['message'] = "ファイル名を「" . htmlspecialchars($new_filename) . "」に変更しました。";
+                $_SESSION['status'] = "success";
             } else {
-                $message = "ファイル名の変更に失敗しました。";
-                $status = "error";
+                $_SESSION['message'] = "ファイル名の変更に失敗しました。";
+                $_SESSION['status'] = "error";
             }
         } else {
-            $message = "ファイルが存在しないか、同じ名前のファイルが既に存在します。";
-            $status = "error";
+            $_SESSION['message'] = "ファイルが存在しないか、同じ名前のファイルが既に存在します。";
+            $_SESSION['status'] = "error";
         }
     }
+    header("Location: " . $_SERVER['PHP_SELF']);
+    exit;
 }
 
 // ファイルアップロード処理（複数対応）
@@ -52,7 +59,6 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_FILES["files"])) {
     $uploadedCount = 0;
     $errors = 0;
 
-    // files[] が配列であることを想定
     if (isset($files["name"]) && is_array($files["name"])) {
         $fileCount = count($files["name"]);
         for ($i = 0; $i < $fileCount; $i++) {
@@ -70,13 +76,15 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_FILES["files"])) {
     }
 
     if ($uploadedCount > 0) {
-        $message = $uploadedCount . "件のファイルをアップロードしました。";
-        if ($errors > 0) $message .= "（" . $errors . "件失敗）";
-        $status = "success";
+        $_SESSION['message'] = $uploadedCount . "件のファイルをアップロードしました。";
+        if ($errors > 0) $_SESSION['message'] .= "（" . $errors . "件失敗）";
+        $_SESSION['status'] = "success";
     } else if ($errors > 0) {
-        $message = "アップロードに失敗しました。";
-        $status = "error";
+        $_SESSION['message'] = "アップロードに失敗しました。";
+        $_SESSION['status'] = "error";
     }
+    header("Location: " . $_SERVER['PHP_SELF']);
+    exit;
 }
 
 // サーバーのURLベースを取得
@@ -317,7 +325,6 @@ $baseUrl = $protocol . "://" . $host . rtrim($currentDir, '/') . "/uploads/";
         }
 
         function handleFiles(files) {
-            // 重複チェックは簡易的に名前とサイズで行う
             const newFiles = files.filter(file => 
                 !selectedFiles.some(s => s.name === file.name && s.size === file.size)
             );
@@ -336,7 +343,7 @@ $baseUrl = $protocol . "://" . $host . rtrim($currentDir, '/') . "/uploads/";
             fileListContainer.innerHTML = '';
             selectedFiles.forEach((file, index) => {
                 const item = document.createElement('div');
-                item.className = 'file-info'; // 好評だった元のスタイルを再利用
+                item.className = 'file-info';
                 item.innerHTML = `
                     <span>選択中: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)</span>
                     <button type="button" class="remove-file-btn" title="削除">
