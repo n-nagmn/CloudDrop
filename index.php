@@ -300,8 +300,24 @@ $baseUrl = $protocol . "://" . $host . rtrim($currentDir, '/') . "/uploads/";
         }
 
         function updateFileInfo(file) {
-            fileInfo.textContent = `選択中: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`;
-            fileInfo.style.display = 'block';
+            fileInfo.innerHTML = `
+                <span>選択中: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)</span>
+                <button type="button" class="remove-file-btn" id="remove-file-btn" title="選択解除">
+                    <i class="fas fa-times-circle"></i>
+                </button>
+            `;
+            fileInfo.style.display = 'flex';
+
+            document.getElementById('remove-file-btn').addEventListener('click', (e) => {
+                e.stopPropagation();
+                clearFileInput();
+            });
+        }
+
+        function clearFileInput() {
+            fileInput.value = '';
+            fileInfo.style.display = 'none';
+            fileInfo.innerHTML = '';
         }
 
         // コピー機能（HTTPフォールバック対応）
