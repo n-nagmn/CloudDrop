@@ -1,4 +1,5 @@
 <?php
+date_default_timezone_set('Asia/Tokyo');
 session_start();
 
 $uploadDir = "uploads/";
