@@ -42,7 +42,7 @@ function parseSizeToBytes($sizeStr) {
 }
 $phpMaxBytes = parseSizeToBytes(ini_get('upload_max_filesize'));
 $appMaxBytes = 10 * 1024 * 1024;
-$sizeMismatchWarning = $phpMaxBytes > 0 && $phpMaxBytes < $appMaxBytes
+$sizeMismatchWarning = $phpMaxBytes < $appMaxBytes
     ? "注意: サーバーの upload_max_filesize（" . ini_get('upload_max_filesize') . "）がアプリの上限（10MB）より小さいため、10MBを超えるファイルはアップロードできません。"
     : "";
 
@@ -71,6 +71,9 @@ function validateFilename($name) {
     if (strpos($name, '.') === 0) {
         return "ドットで始まるファイル名は使用できません。";
     }
+    if (strlen($name) > 255) {
+        return "ファイル名が長すぎます（255バイトまで）。";
+    }
     if (!preg_match('/^[\w.\-\s\x{3040}-\x{30FF}\x{4E00}-\x{9FFF}\x{FF66}-\x{FFDC}]+$/u', $name)) {
         return "ファイル名に使用できない文字が含まれています。";
     }
@@ -81,8 +84,8 @@ function validateFilename($name) {
     return null;
 }
 
-// post_max_size超過の検出（CSRFトークンの有無で絞り込み、空POSTの誤検知を防止）
-if ($_SERVER["REQUEST_METHOD"] === "POST" && !empty($_POST['csrf_token']) && empty($_FILES) && empty($_POST)) {
+// post_max_size超過の検出（CSRFトークンすらPOSTに届いていなければ、POST全体がpost_max_size超過と推定）
+if ($_SERVER["REQUEST_METHOD"] === "POST" && empty($_FILES) && !isset($_POST['csrf_token'])) {
     $_SESSION['message'] = "アップロードに失敗しました。POSTデータのサイズが post_max_size を超えている可能性があります。";
     $_SESSION['status'] = "error";
 }
@@ -177,13 +180,37 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_FILES["files"])) {
     $uploadedCount = 0;
     $errors = 0;
     $errorList = [];
+    $renamedNames = [];
+
+    // $_FILESのサブ配列（name, type, size, tmp_name, error）が等長の配列であることを検証
+    $fileKeys = ["name", "type", "size", "tmp_name", "error"];
+    $expectedCount = null;
+    $filesMalformed = false;
+    foreach ($fileKeys as $key) {
+        if (!isset($files[$key]) || !is_array($files[$key])) {
+            $filesMalformed = true;
+            break;
+        }
+        if ($expectedCount === null) {
+            $expectedCount = count($files[$key]);
+        } elseif (count($files[$key]) !== $expectedCount) {
+            $filesMalformed = true;
+            break;
+        }
+    }
+    if ($filesMalformed) {
+        $_SESSION['message'] = "アップロードに失敗しました（不正なリクエスト形式です）。";
+        $_SESSION['status'] = "error";
+        header('Location: ' . $script . '/index.php');
+        exit;
+    }
 
     if (isset($files["name"]) && is_array($files["name"])) {
         $fileCount = count($files["name"]);
         $allowedExts = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
         $allowedMimeTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
         $maxBytes = $appMaxBytes;
-        $finfo = finfo_open(FILEINFO_MIME_TYPE);
+        $finfo = @finfo_open(FILEINFO_MIME_TYPE);
         for ($i = 0; $i < $fileCount; $i++) {
             if ($files["error"][$i] === UPLOAD_ERR_OK) {
                 $origName = basename($files["name"][$i]);
@@ -207,23 +234,64 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_FILES["files"])) {
                     $errorList[] = "「" . $origName . "」: サイズが大きすぎます（" . formatBytes($maxBytes) . "まで）。";
                     continue;
                 }
-                // MIMEタイプをfinfoで検証（ループ外で1回だけオープン）
-                $mime = $finfo ? finfo_file($finfo, $files["tmp_name"][$i]) : false;
-                if ($mime === false || !in_array($mime, $allowedMimeTypes, true)) {
-                    $errors++;
-                    $errorList[] = "「" . $origName . "」: 実際のファイル内容が許可された画像形式ではありません。";
-                    continue;
-                }
-                // getimagesizeを補足チェックとして維持
-                if (@getimagesize($files["tmp_name"][$i]) === false) {
-                    $errors++;
-                    $errorList[] = "「" . $origName . "」: 破損しているか無効な画像ファイルです。";
-                    continue;
-                }
-                $targetPath = $uploadDir . $origName;
-                if (move_uploaded_file($files["tmp_name"][$i], $targetPath)) {
-                    $uploadedCount++;
+                // MIMEタイプをfinfoで検証（finfoの利用ができない場合はgetimagesizeのみの補足チェックにフォールバック）
+                if ($finfo) {
+                    $mime = finfo_file($finfo, $files["tmp_name"][$i]);
+                    if ($mime === false || !in_array($mime, $allowedMimeTypes, true)) {
+                        $errors++;
+                        $errorList[] = "「" . $origName . "」: 実際のファイル内容が許可された画像形式ではありません。";
+                        continue;
+                    }
                 } else {
+                    if (@getimagesize($files["tmp_name"][$i]) === false) {
+                        $errors++;
+                        $errorList[] = "「" . $origName . "」: 破損しているか無効な画像ファイルです。";
+                        continue;
+                    }
+                }
+                // 同名ファイルが存在する場合は連番サフィックス（cat-1.jpg, cat-2.jpg）でユニークな名前を生成
+                $stem = pathinfo($origName, PATHINFO_FILENAME);
+                $ext = pathinfo($origName, PATHINFO_EXTENSION);
+                $finalName = $origName;
+                if (file_exists($uploadDir . $origName)) {
+                    $finalName = null;
+                    for ($suffix = 1; $suffix < 10000; $suffix++) {
+                        $candidate = $stem . '-' . $suffix . ($ext !== "" ? '.' . $ext : "");
+                        if (!file_exists($uploadDir . $candidate)) {
+                            $finalName = $candidate;
+                            break;
+                        }
+                    }
+                    if ($finalName === null) {
+                        $errors++;
+                        $errorList[] = "「" . $origName . "」: 保存先の生成に失敗しました。";
+                        continue;
+                    }
+                }
+                $targetPath = $uploadDir . $finalName;
+                // いったん一時名に書き込み、最終名へアトミックにrenameすることで途中破損したファイルが残らない
+                $tempPath = $uploadDir . '.tmp_' . bin2hex(random_bytes(8));
+                if (!move_uploaded_file($files["tmp_name"][$i], $tempPath)) {
+                    $errors++;
+                    $errorList[] = "「" . $origName . "」: サーバーへの保存に失敗しました。";
+                    continue;
+                }
+                if (file_exists($targetPath)) {
+                    // TOCTOUレース: 書き込み後に同名ファイルが作成された
+                    if (!rename($tempPath, $tempPath . '.conflict')) {
+                        @unlink($tempPath);
+                    }
+                    $errors++;
+                    $errorList[] = "「" . $origName . "」: 保存先に競合が発生したため保存に失敗しました。";
+                    continue;
+                }
+                if (rename($tempPath, $targetPath)) {
+                    $uploadedCount++;
+                    if ($finalName !== $origName) {
+                        $renamedNames[] = $origName . ' -> ' . $finalName;
+                    }
+                } else {
+                    @unlink($tempPath);
                     $errors++;
                     $errorList[] = "「" . $origName . "」: サーバーへの保存に失敗しました。";
                 }
@@ -237,8 +305,14 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_FILES["files"])) {
 
     if ($uploadedCount > 0) {
         $_SESSION['message'] = $uploadedCount . "件のファイルをアップロードしました。";
+        if (!empty($renamedNames)) {
+            $_SESSION['message'] .= "<br>（名前が変更されました: " . implode(", ", $renamedNames) . "）";
+        }
         if ($errors > 0) $_SESSION['message'] .= "（" . $errors . "件失敗）";
         $_SESSION['status'] = "success";
+    } else if ($uploadedCount === 0 && $errors === 0) {
+        $_SESSION['message'] = "ファイルが選択されていません。アップロードしたいファイルを選択してください。";
+        $_SESSION['status'] = "error";
     } else if ($errors > 0) {
         $_SESSION['message'] = "アップロードに失敗しました。";
         if (!empty($errorList)) {
@@ -508,13 +582,18 @@ $baseUrl = $protocol . "://" . $host . rtrim($currentDir, '/') . "/uploads/";
             selectedFiles.forEach((file, index) => {
                 const item = document.createElement('div');
                 item.className = 'file-info';
-                item.innerHTML = `
-                    <span>選択中: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)</span>
-                    <button type="button" class="remove-file-btn" title="削除">
-                        <i class="fas fa-times-circle"></i>
-                    </button>
-                `;
-                item.querySelector('.remove-file-btn').onclick = (e) => {
+                const nameSpan = document.createElement('span');
+                nameSpan.appendChild(document.createTextNode('選択中: ' + file.name + ' (' + (file.size / 1024 / 1024).toFixed(2) + ' MB)'));
+                const removeBtn = document.createElement('button');
+                removeBtn.type = 'button';
+                removeBtn.className = 'remove-file-btn';
+                removeBtn.title = '削除';
+                const removeIcon = document.createElement('i');
+                removeIcon.className = 'fas fa-times-circle';
+                removeBtn.appendChild(removeIcon);
+                item.appendChild(nameSpan);
+                item.appendChild(removeBtn);
+                removeBtn.onclick = (e) => {
                     e.stopPropagation();
                     selectedFiles.splice(index, 1);
                     renderFileList();
@@ -528,10 +607,15 @@ $baseUrl = $protocol . "://" . $host . rtrim($currentDir, '/') . "/uploads/";
 
         document.getElementById('upload-form').onsubmit = function(e) {
             if (selectedFiles.length === 0) return false;
-            
+
             const dataTransfer = new DataTransfer();
             selectedFiles.forEach(file => dataTransfer.items.add(file));
             fileInput.files = dataTransfer.files;
+
+            // 送信中はボタンを無効化して読み込み状態を表示
+            uploadBtn.disabled = true;
+            uploadBtn.dataset.originalHtml = uploadBtn.innerHTML;
+            uploadBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> アップロード中...';
             return true;
         };
 
@@ -564,19 +648,34 @@ $baseUrl = $protocol . "://" . $host . rtrim($currentDir, '/') . "/uploads/";
             document.body.appendChild(textArea);
             textArea.focus();
             textArea.select();
+            let successful = false;
             try {
-                const successful = document.execCommand('copy');
-                if (successful) showToast();
+                successful = document.execCommand('copy');
             } catch (err) {
                 console.error('Fallback copy error:', err);
             }
             document.body.removeChild(textArea);
+            if (successful) {
+                showToast();
+            } else {
+                showErrorToast();
+            }
         }
 
         function showToast() {
-            toast.classList.add('show');
+            showToastMessage('コピーしました！');
+        }
+
+        function showErrorToast() {
+            showToastMessage('コピーに失敗しました。');
+        }
+
+        function showToastMessage(msg) {
+            const original = toast.dataset.originalText || toast.textContent;
+            toast.textContent = msg;
+            toast.classList.add('show', 'toast-error');
             setTimeout(() => {
-                toast.classList.remove('show');
+                toast.classList.remove('show', 'toast-error');
             }, 2000);
         }
 

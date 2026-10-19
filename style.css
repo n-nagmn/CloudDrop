@@ -313,6 +313,20 @@ footer {
     opacity: 1;
 }
 
+.toast.toast-error {
+    background: var(--error);
+}
+
+.btn-primary:disabled {
+    background-color: #94a3b8;
+    cursor: not-allowed;
+    opacity: 0.8;
+}
+
+.btn-primary:disabled:hover {
+    background-color: #94a3b8;
+}
+
 @media (max-width: 640px) {
     .app-container {
         padding: 1rem;
