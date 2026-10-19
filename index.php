@@ -2,17 +2,54 @@
 date_default_timezone_set('Asia/Tokyo');
 session_start();
 
+// CSRFトークンの発行
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(16));
+}
+// CSRF検証
+function check_csrf() {
+    if (!hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'] ?? '')) {
+        http_response_code(403);
+        die('CSRF');
+    }
+}
+
+// PHPのアップロード上限設定を検査（アプリ側は10MBを想定）
+function parseSizeToBytes($sizeStr) {
+    $sizeStr = trim((string)$sizeStr);
+    $last = strtolower($sizeStr[strlen($sizeStr) - 1]);
+    $num = (float)$sizeStr;
+    switch ($last) {
+        case 'g': $num *= 1024 * 1024 * 1024; break;
+        case 'm': $num *= 1024 * 1024; break;
+        case 'k': $num *= 1024; break;
+    }
+    return (int)$num;
+}
+$phpMaxBytes = parseSizeToBytes(ini_get('upload_max_filesize'));
+$appMaxBytes = 10 * 1024 * 1024;
+$sizeMismatchWarning = $phpMaxBytes > 0 && $phpMaxBytes < $appMaxBytes
+    ? "注意: サーバーの upload_max_filesize（" . ini_get('upload_max_filesize') . "）がアプリの上限（10MB）より小さいため、10MBを超えるファイルはアップロードできません。"
+    : "";
+
 $uploadDir = "uploads/";
 if (!is_dir($uploadDir)) {
-    mkdir($uploadDir, 0777, true);
+    mkdir($uploadDir, 0755, true);
 }
 
 $message = isset($_SESSION['message']) ? $_SESSION['message'] : "";
 $status = isset($_SESSION['status']) ? $_SESSION['status'] : "";
 unset($_SESSION['message'], $_SESSION['status']);
 
+// post_max_size超過の検出（POSTだがフォームデータが一切届いていない）
+if ($_SERVER["REQUEST_METHOD"] === "POST" && empty($_FILES) && empty($_POST)) {
+    $_SESSION['message'] = "アップロードに失敗しました。POSTデータのサイズが post_max_size を超えている可能性があります。";
+    $_SESSION['status'] = "error";
+}
+
 // ファイル削除処理
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["action"]) && $_POST["action"] === "delete") {
+    check_csrf();
     $filename = basename($_POST["filename"]);
     $filePath = $uploadDir . $filename;
     if (file_exists($filePath)) {
@@ -23,6 +60,9 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["action"]) && $_POST["
             $_SESSION['message'] = "ファイルの削除に失敗しました。";
             $_SESSION['status'] = "error";
         }
+    } else {
+        $_SESSION['message'] = "ファイルは既に削除されていました。";
+        $_SESSION['status'] = "error";
     }
     header("Location: " . $_SERVER['PHP_SELF']);
     exit;
@@ -30,24 +70,50 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["action"]) && $_POST["
 
 // ファイル名前変更処理
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["action"]) && $_POST["action"] === "rename") {
+    check_csrf();
     $filename = basename($_POST["filename"]);
-    $new_filename = basename($_POST["new_filename"]);
-    
-    if ($new_filename !== "") {
-        $oldFilePath = $uploadDir . $filename;
-        $newFilePath = $uploadDir . $new_filename;
-        
-        if (file_exists($oldFilePath) && !file_exists($newFilePath)) {
-            if (rename($oldFilePath, $newFilePath)) {
-                $_SESSION['message'] = "ファイル名を「" . htmlspecialchars($new_filename) . "」に変更しました。";
-                $_SESSION['status'] = "success";
+    $newName = basename($_POST["new_filename"]);
+    $newName = rtrim($newName, " ."); // 末尾のスペースやドットを除去
+    $oldExt = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+    $newExt = strtolower(pathinfo($newName, PATHINFO_EXTENSION));
+
+    // 拡張子は元のファイルと同一に強制
+    if ($newExt !== "" && $newExt !== $oldExt) {
+        $newName = preg_replace('/\.[^\.]*$/', '', $newName) . '.' . $oldExt;
+    } elseif ($newExt === "" && $oldExt !== "") {
+        $newName = $newName . '.' . $oldExt;
+    }
+
+    if ($newName !== "") {
+        // 不正な文字・Windows基底名の癖のチェック
+        $invalidReason = null;
+        if (strpos($newName, ':') !== false) {
+            $invalidReason = "コロン（:）を含むファイル名は使用できません。";
+        } elseif (strpos($newName, '.') === 0) {
+            $invalidReason = "ドットで始まるファイル名は使用できません。";
+        } elseif (!preg_match('/^[\w.\-\x{3040}-\x{30FF}\x{4E00}-\x{9FFF}\x{FF66}-\x{FFDC}]+$/u', $newName)) {
+            $invalidReason = "ファイル名に使用できない文字が含まれています。";
+        }
+
+        if ($invalidReason !== null) {
+            $_SESSION['message'] = $invalidReason;
+            $_SESSION['status'] = "error";
+        } else {
+            $oldFilePath = $uploadDir . $filename;
+            $newFilePath = $uploadDir . $newName;
+
+            if (file_exists($oldFilePath) && !file_exists($newFilePath)) {
+                if (rename($oldFilePath, $newFilePath)) {
+                    $_SESSION['message'] = "ファイル名を「" . htmlspecialchars($newName) . "」に変更しました。";
+                    $_SESSION['status'] = "success";
+                } else {
+                    $_SESSION['message'] = "ファイル名の変更に失敗しました。";
+                    $_SESSION['status'] = "error";
+                }
             } else {
-                $_SESSION['message'] = "ファイル名の変更に失敗しました。";
+                $_SESSION['message'] = "ファイルが存在しないか、同じ名前のファイルが既に存在します。";
                 $_SESSION['status'] = "error";
             }
-        } else {
-            $_SESSION['message'] = "ファイルが存在しないか、同じ名前のファイルが既に存在します。";
-            $_SESSION['status'] = "error";
         }
     }
     header("Location: " . $_SERVER['PHP_SELF']);
@@ -56,22 +122,56 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["action"]) && $_POST["
 
 // ファイルアップロード処理（複数対応）
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_FILES["files"])) {
+    check_csrf();
     $files = $_FILES["files"];
     $uploadedCount = 0;
     $errors = 0;
+    $errorList = [];
 
     if (isset($files["name"]) && is_array($files["name"])) {
         $fileCount = count($files["name"]);
+        $allowedExts = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+        $allowedMimeTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+        $maxBytes = $appMaxBytes;
         for ($i = 0; $i < $fileCount; $i++) {
             if ($files["error"][$i] === UPLOAD_ERR_OK) {
-                $targetPath = $uploadDir . basename($files["name"][$i]);
+                $origName = basename($files["name"][$i]);
+                $ext = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
+                if (!in_array($ext, $allowedExts, true)) {
+                    $errors++;
+                    $errorList[] = "「" . $origName . "」: 許可されていないファイル形式です。";
+                    continue;
+                }
+                if ($files["size"][$i] > $maxBytes) {
+                    $errors++;
+                    $errorList[] = "「" . $origName . "」: サイズが大きすぎます（10MBまで）。";
+                    continue;
+                }
+                // MIMEタイプをfinfoで検証
+                $finfo = finfo_open(FILEINFO_MIME_TYPE);
+                $mime = $finfo ? finfo_file($finfo, $files["tmp_name"][$i]) : false;
+                if ($finfo) finfo_close($finfo);
+                if ($mime === false || !in_array($mime, $allowedMimeTypes, true)) {
+                    $errors++;
+                    $errorList[] = "「" . $origName . "」: 実際のファイル内容が許可された画像形式ではありません。";
+                    continue;
+                }
+                // getimagesizeを補足チェックとして維持
+                if (@getimagesize($files["tmp_name"][$i]) === false) {
+                    $errors++;
+                    $errorList[] = "「" . $origName . "」: 破損しているか無効な画像ファイルです。";
+                    continue;
+                }
+                $targetPath = $uploadDir . $origName;
                 if (move_uploaded_file($files["tmp_name"][$i], $targetPath)) {
                     $uploadedCount++;
                 } else {
                     $errors++;
+                    $errorList[] = "「" . $origName . "」: サーバーへの保存に失敗しました。";
                 }
             } else if ($files["error"][$i] !== UPLOAD_ERR_NO_FILE) {
                 $errors++;
+                $errorList[] = "「" . ($files["name"][$i] !== "" ? $files["name"][$i] : "無名") . "」: アップロードエラー（コード " . $files["error"][$i] . "）。";
             }
         }
     }
@@ -82,15 +182,18 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_FILES["files"])) {
         $_SESSION['status'] = "success";
     } else if ($errors > 0) {
         $_SESSION['message'] = "アップロードに失敗しました。";
+        if (!empty($errorList)) {
+            $_SESSION['message'] .= "<br>" . implode("</br>", $errorList);
+        }
         $_SESSION['status'] = "error";
     }
     header("Location: " . $_SERVER['PHP_SELF']);
     exit;
 }
 
-// サーバーのURLベースを取得
+// サーバーのURLベースを取得（ホストヘッダ注入対策としてHTTP_HOSTを検証）
 $protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "http";
-$host = $_SERVER['HTTP_HOST'];
+$host = filter_var($_SERVER['HTTP_HOST'] ?? '', FILTER_VALIDATE_HOST) ?: 'localhost';
 $currentDir = dirname($_SERVER['PHP_SELF']);
 $baseUrl = $protocol . "://" . $host . rtrim($currentDir, '/') . "/uploads/";
 ?>
@@ -100,7 +203,7 @@ $baseUrl = $protocol . "://" . $host . rtrim($currentDir, '/') . "/uploads/";
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CloudDrop - Simple File Sharing</title>
-    <link rel="stylesheet" href="style.css?v=<?php echo time(); ?>">
+    <link rel="stylesheet" href="style.css?v=<?php echo @filemtime(__DIR__ . '/style.css') ?: 0; ?>">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
@@ -117,11 +220,18 @@ $baseUrl = $protocol . "://" . $host . rtrim($currentDir, '/') . "/uploads/";
                 <?php if ($message): ?>
                     <div class="alert alert-<?php echo $status; ?>">
                         <i class="fas <?php echo $status === 'success' ? 'fa-check-circle' : 'fa-exclamation-circle'; ?>"></i>
-                        <?php echo $message; ?>
+                        <?php echo htmlspecialchars($message, ENT_QUOTES, 'UTF-8'); ?>
+                    </div>
+                <?php endif; ?>
+                <?php if ($sizeMismatchWarning !== ""): ?>
+                    <div class="alert alert-error">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <?php echo $sizeMismatchWarning; ?>
                     </div>
                 <?php endif; ?>
 
                 <form action="" method="post" enctype="multipart/form-data" id="upload-form">
+                    <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
                     <div class="drop-zone" id="drop-zone">
                         <div class="drop-zone-content">
                             <i class="fas fa-cloud-upload-alt"></i>
@@ -152,7 +262,7 @@ $baseUrl = $protocol . "://" . $host . rtrim($currentDir, '/') . "/uploads/";
                         </thead>
                         <tbody>
                             <?php
-                            $files = array_diff(scandir($uploadDir), array(".", ".."));
+                            $files = array_diff(scandir($uploadDir) ?: [], array(".", ".."));
                             $fileDetails = [];
                             foreach ($files as $f) {
                                 $path = $uploadDir . $f;
@@ -192,7 +302,7 @@ $baseUrl = $protocol . "://" . $host . rtrim($currentDir, '/') . "/uploads/";
                                     <tr>
                                         <td class="file-name">
                                             <?php if ($isImage): ?>
-                                                <a href="<?php echo htmlspecialchars($fileUrl); ?>" target="_blank" title="新しいタブで画像を開く" class="thumbnail-link">
+                                                <a href="<?php echo htmlspecialchars($fileUrl); ?>" target="_blank" rel="noopener noreferrer" title="新しいタブで画像を開く" class="thumbnail-link">
                                                     <img src="<?php echo htmlspecialchars($fileUrl); ?>" class="thumbnail" alt="<?php echo htmlspecialchars($f['name']); ?>">
                                                 </a>
                                             <?php else: ?>
@@ -204,14 +314,15 @@ $baseUrl = $protocol . "://" . $host . rtrim($currentDir, '/') . "/uploads/";
                                         <td><?php echo date("Y/m/d H:i", $f['time']); ?></td>
                                         <td class="actions">
                                             <div class="action-group">
-                                                <a href="uploads/<?php echo rawurlencode($f['name']); ?>" class="btn-icon" target="_blank" title="ダウンロード">
+                                                <a href="uploads/<?php echo rawurlencode($f['name']); ?>" class="btn-icon" target="_blank" rel="noopener noreferrer" title="ダウンロード">
                                                     <i class="fas fa-download"></i>
                                                 </a>
-                                                <button class="btn-icon copy-btn" data-url="<?php echo $fileUrl; ?>" title="リンクをコピー">
+                                                <button class="btn-icon copy-btn" data-url="<?php echo htmlspecialchars($fileUrl, ENT_QUOTES); ?>" title="リンクをコピー">
                                                     <i class="fas fa-link"></i>
                                                 </button>
                                                 <form action="" method="post" onsubmit="return handleRename(this, '<?php echo htmlspecialchars($f['name'], ENT_QUOTES); ?>');" style="display:inline;">
                                                     <input type="hidden" name="action" value="rename">
+                                                    <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
                                                     <input type="hidden" name="filename" value="<?php echo htmlspecialchars($f['name']); ?>">
                                                     <input type="hidden" name="new_filename" class="new-filename-input" value="">
                                                     <button type="submit" class="btn-icon rename-btn" title="名前変更">
@@ -220,6 +331,7 @@ $baseUrl = $protocol . "://" . $host . rtrim($currentDir, '/') . "/uploads/";
                                                 </form>
                                                 <form action="" method="post" onsubmit="return confirm('本当に削除しますか？');" style="display:inline;">
                                                     <input type="hidden" name="action" value="delete">
+                                                    <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
                                                     <input type="hidden" name="filename" value="<?php echo htmlspecialchars($f['name']); ?>">
                                                     <button type="submit" class="btn-icon delete-btn" title="削除">
                                                         <i class="fas fa-trash-alt"></i>
@@ -299,6 +411,7 @@ $baseUrl = $protocol . "://" . $host . rtrim($currentDir, '/') . "/uploads/";
             for (let i = 0; i < items.length; i++) {
                 if (items[i].type.indexOf('image') !== -1) {
                     const blob = items[i].getAsFile();
+                    if (!blob) continue;
                     const file = new File([blob], `pasted-image-${Date.now()}-${i}.png`, { type: blob.type });
                     pastedFiles.push(file);
                 }
