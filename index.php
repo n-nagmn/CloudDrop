@@ -14,6 +14,16 @@ function check_csrf() {
     }
 }
 
+// バイト数を可読な文字列に変換
+function formatBytes($bytes, $precision = 2) {
+    $units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    $bytes = max($bytes, 0);
+    $pow = floor(($bytes ? log($bytes) : 0) / log(1024));
+    $pow = min($pow, count($units) - 1);
+    $bytes /= pow(1024, $pow);
+    return round($bytes, $precision) . ' ' . $units[$pow];
+}
+
 // PHPのアップロード上限設定を検査（アプリ側は10MBを想定）
 function parseSizeToBytes($sizeStr) {
     $sizeStr = trim((string)$sizeStr);
@@ -41,11 +51,7 @@ $message = isset($_SESSION['message']) ? $_SESSION['message'] : "";
 $status = isset($_SESSION['status']) ? $_SESSION['status'] : "";
 unset($_SESSION['message'], $_SESSION['status']);
 
-// post_max_size超過の検出（POSTだがフォームデータが一切届いていない）
-if ($_SERVER["REQUEST_METHOD"] === "POST" && empty($_FILES) && empty($_POST)) {
-    $_SESSION['message'] = "アップロードに失敗しました。POSTデータのサイズが post_max_size を超えている可能性があります。";
-    $_SESSION['status'] = "error";
-}
+// post_max_size超過の検出はCSRF検証の後に実行する（空POSTの誤検知防止）
 
 // ファイル削除処理
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["action"]) && $_POST["action"] === "delete") {
@@ -64,7 +70,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["action"]) && $_POST["
         $_SESSION['message'] = "ファイルは既に削除されていました。";
         $_SESSION['status'] = "error";
     }
-    header("Location: " . $_SERVER['PHP_SELF']);
+    header("Location: /uploader/index.php");
     exit;
 }
 
@@ -72,7 +78,15 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["action"]) && $_POST["
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["action"]) && $_POST["action"] === "rename") {
     check_csrf();
     $filename = basename($_POST["filename"]);
-    $newName = basename($_POST["new_filename"]);
+    $rawNewName = $_POST["new_filename"];
+    if (strpos($rawNewName, ':') !== false) {
+        $msg = 'ファイル名にコロンは使えません。';
+        $_SESSION['message'] = $msg;
+        $_SESSION['status'] = "error";
+        header("Location: /uploader/index.php");
+        exit;
+    }
+    $newName = basename($rawNewName);
     $newName = rtrim($newName, " ."); // 末尾のスペースやドットを除去
     $oldExt = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
     $newExt = strtolower(pathinfo($newName, PATHINFO_EXTENSION));
@@ -102,12 +116,14 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["action"]) && $_POST["
             $oldFilePath = $uploadDir . $filename;
             $newFilePath = $uploadDir . $newName;
 
-            if (file_exists($oldFilePath) && !file_exists($newFilePath)) {
-                if (rename($oldFilePath, $newFilePath)) {
+            // rename()の戻り値を信頼し、失敗時は結果を検証して適切なエラーを返す
+            if (file_exists($oldFilePath)) {
+                if (rename($oldFilePath, $newFilePath) && is_file($newFilePath)) {
                     $_SESSION['message'] = "ファイル名を「" . htmlspecialchars($newName) . "」に変更しました。";
                     $_SESSION['status'] = "success";
                 } else {
-                    $_SESSION['message'] = "ファイル名の変更に失敗しました。";
+                    // TOCTOUレース: 競合で同名ファイルが作成された、または権限エラー
+                    $_SESSION['message'] = "ファイル名の変更に失敗しました（同じ名前のファイルが既に存在するか、サーバーの権限により変更できません）。";
                     $_SESSION['status'] = "error";
                 }
             } else {
@@ -116,13 +132,18 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["action"]) && $_POST["
             }
         }
     }
-    header("Location: " . $_SERVER['PHP_SELF']);
+    header("Location: /uploader/index.php");
     exit;
 }
 
 // ファイルアップロード処理（複数対応）
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_FILES["files"])) {
     check_csrf();
+    // CSRF検証の後に post_max_size 超過を検出（POSTだがフォームデータが一切届いていない場合）
+    if (empty($_FILES) && empty($_POST)) {
+        $_SESSION['message'] = "アップロードに失敗しました。POSTデータのサイズが post_max_size を超えている可能性があります。";
+        $_SESSION['status'] = "error";
+    }
     $files = $_FILES["files"];
     $uploadedCount = 0;
     $errors = 0;
@@ -133,6 +154,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_FILES["files"])) {
         $allowedExts = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
         $allowedMimeTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
         $maxBytes = $appMaxBytes;
+        $finfo = finfo_open(FILEINFO_MIME_TYPE);
         for ($i = 0; $i < $fileCount; $i++) {
             if ($files["error"][$i] === UPLOAD_ERR_OK) {
                 $origName = basename($files["name"][$i]);
@@ -144,13 +166,11 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_FILES["files"])) {
                 }
                 if ($files["size"][$i] > $maxBytes) {
                     $errors++;
-                    $errorList[] = "「" . $origName . "」: サイズが大きすぎます（10MBまで）。";
+                    $errorList[] = "「" . $origName . "」: サイズが大きすぎます（" . formatBytes($maxBytes) . "まで）。";
                     continue;
                 }
-                // MIMEタイプをfinfoで検証
-                $finfo = finfo_open(FILEINFO_MIME_TYPE);
+                // MIMEタイプをfinfoで検証（ループ外で1回だけオープン）
                 $mime = $finfo ? finfo_file($finfo, $files["tmp_name"][$i]) : false;
-                if ($finfo) finfo_close($finfo);
                 if ($mime === false || !in_array($mime, $allowedMimeTypes, true)) {
                     $errors++;
                     $errorList[] = "「" . $origName . "」: 実際のファイル内容が許可された画像形式ではありません。";
@@ -174,6 +194,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_FILES["files"])) {
                 $errorList[] = "「" . ($files["name"][$i] !== "" ? $files["name"][$i] : "無名") . "」: アップロードエラー（コード " . $files["error"][$i] . "）。";
             }
         }
+        if ($finfo) finfo_close($finfo);
     }
 
     if ($uploadedCount > 0) {
@@ -187,7 +208,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_FILES["files"])) {
         }
         $_SESSION['status'] = "error";
     }
-    header("Location: " . $_SERVER['PHP_SELF']);
+    header("Location: /uploader/index.php");
     exit;
 }
 
@@ -278,15 +299,6 @@ $baseUrl = $protocol . "://" . $host . rtrim($currentDir, '/') . "/uploads/";
                             usort($fileDetails, function($a, $b) {
                                 return $b['time'] - $a['time'];
                             });
-
-                            function formatBytes($bytes, $precision = 2) {
-                                $units = ['B', 'KB', 'MB', 'GB', 'TB'];
-                                $bytes = max($bytes, 0);
-                                $pow = floor(($bytes ? log($bytes) : 0) / log(1024));
-                                $pow = min($pow, count($units) - 1);
-                                $bytes /= pow(1024, $pow);
-                                return round($bytes, $precision) . ' ' . $units[$pow];
-                            }
 
                             if (empty($fileDetails)): ?>
                                 <tr>
