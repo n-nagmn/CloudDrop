@@ -1,11 +1,11 @@
-# CloudDrop ☁️
+# CloudDrop
 
 CloudDrop は、PHP で構築されたシンプルでモダンなファイルアップロード＆共有ツールです。
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![PHP](https://img.shields.io/badge/php-%3E%3D8.0-777bb4.svg)
 
-## ✨ 特徴
+## 特徴
 
 - **モダンな UI**: Tailwind CSS 風のクリーンで直感的なデザイン。
 - **ドラッグ＆ドロップ**: 直感的な操作でファイルをアップロード。
@@ -14,7 +14,7 @@ CloudDrop は、PHP で構築されたシンプルでモダンなファイルア
 - **レスポンシブ**: スマートフォンやタブレットからも快適に利用可能。
 - **大容量対応**: サーバー設定により大容量ファイルのアップロードもサポート。
 
-## 🚀 セットアップ
+## セットアップ
 
 ### 必要条件
 
@@ -55,13 +55,13 @@ upload_max_filesize = 100M
 post_max_size = 100M
 ```
 
-## 🛠 使用技術
+## 使用技術
 
 - **Backend**: PHP
 - **Frontend**: HTML5, Vanilla CSS, JavaScript
 - **Icons**: Font Awesome 6
 - **Fonts**: Inter
 
-## 📝 ライセンス
+## ライセンス
 
 このプロジェクトは [MIT ライセンス](LICENSE) の下で公開されています。

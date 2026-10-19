@@ -106,14 +106,52 @@ header {
     display: none;
 }
 
-.file-info {
+/* 複数ファイル表示用のコンテナ */
+.file-list-container {
+    display: none;
+    flex-direction: column;
+    gap: 0.5rem;
+    width: 100%;
     margin-top: 1rem;
+}
+
+/* 以前好評だったスタイルに戻す */
+.file-info {
+    margin: 0 auto;
     padding: 0.5rem 1rem;
     background: #eef2ff;
     border-radius: 2rem;
     font-size: 0.875rem;
     color: var(--primary-color);
-    display: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    width: max-content;
+    max-width: 100%;
+}
+
+.remove-file-btn {
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+    height: 100%;
+}
+
+.remove-file-btn:hover {
+    opacity: 1;
+}
+
+.remove-file-btn i {
+    font-size: 1.25em;
+    display: block;
 }
 
 .btn-primary {
@@ -185,6 +223,28 @@ header {
 
 .file-name i {
     color: var(--text-muted);
+}
+
+.thumbnail {
+    width: 40px;
+    height: 40px;
+    min-width: 40px;
+    min-height: 40px;
+    max-width: 40px;
+    max-height: 40px;
+    object-fit: cover;
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+    transition: opacity 0.2s;
+}
+
+.thumbnail:hover {
+    opacity: 0.8;
+}
+
+.thumbnail-link {
+    display: inline-block;
+    vertical-align: middle;
 }
 
 .actions {
