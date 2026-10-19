@@ -2,6 +2,9 @@
 date_default_timezone_set('Asia/Tokyo');
 session_start();
 
+// サブパスでも安全に動作するリダイレクト先を算出
+$script = str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME']));
+
 // CSRFトークンの発行
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(16));
@@ -27,6 +30,7 @@ function formatBytes($bytes, $precision = 2) {
 // PHPのアップロード上限設定を検査（アプリ側は10MBを想定）
 function parseSizeToBytes($sizeStr) {
     $sizeStr = trim((string)$sizeStr);
+    if ($sizeStr === '') return 0;
     $last = strtolower($sizeStr[strlen($sizeStr) - 1]);
     $num = (float)$sizeStr;
     switch ($last) {
@@ -51,7 +55,37 @@ $message = isset($_SESSION['message']) ? $_SESSION['message'] : "";
 $status = isset($_SESSION['status']) ? $_SESSION['status'] : "";
 unset($_SESSION['message'], $_SESSION['status']);
 
-// post_max_size超過の検出はCSRF検証の後に実行する（空POSTの誤検知防止）
+// Windowsの予約名チェック（CON, PRN, AUX, NUL, COM1-9, LPT1-9）
+function isWindowsReservedName($name) {
+    return (bool)preg_match('/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i', $name);
+}
+
+// ファイル名の検証（許可文字 + Windows予約名）。OKならnull、NGならエラーメッセージを返す
+function validateFilename($name) {
+    if ($name === "") {
+        return "ファイル名が空です。";
+    }
+    if (strpos($name, ':') !== false) {
+        return "ファイル名にコロン（:）は使えません。";
+    }
+    if (strpos($name, '.') === 0) {
+        return "ドットで始まるファイル名は使用できません。";
+    }
+    if (!preg_match('/^[\w.\-\s\x{3040}-\x{30FF}\x{4E00}-\x{9FFF}\x{FF66}-\x{FFDC}]+$/u', $name)) {
+        return "ファイル名に使用できない文字が含まれています。";
+    }
+    $stem = pathinfo($name, PATHINFO_FILENAME);
+    if (isWindowsReservedName($stem)) {
+        return "「" . $stem . "」はWindowsの予約名のため使用できません。";
+    }
+    return null;
+}
+
+// post_max_size超過の検出（CSRFトークンの有無で絞り込み、空POSTの誤検知を防止）
+if ($_SERVER["REQUEST_METHOD"] === "POST" && !empty($_POST['csrf_token']) && empty($_FILES) && empty($_POST)) {
+    $_SESSION['message'] = "アップロードに失敗しました。POSTデータのサイズが post_max_size を超えている可能性があります。";
+    $_SESSION['status'] = "error";
+}
 
 // ファイル削除処理
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["action"]) && $_POST["action"] === "delete") {
@@ -70,7 +104,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["action"]) && $_POST["
         $_SESSION['message'] = "ファイルは既に削除されていました。";
         $_SESSION['status'] = "error";
     }
-    header("Location: /uploader/index.php");
+    header('Location: ' . $script . '/index.php');
     exit;
 }
 
@@ -79,40 +113,35 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["action"]) && $_POST["
     check_csrf();
     $filename = basename($_POST["filename"]);
     $rawNewName = $_POST["new_filename"];
-    if (strpos($rawNewName, ':') !== false) {
-        $msg = 'ファイル名にコロンは使えません。';
-        $_SESSION['message'] = $msg;
-        $_SESSION['status'] = "error";
-        header("Location: /uploader/index.php");
-        exit;
-    }
-    $newName = basename($rawNewName);
+    $newName = basename((string)$rawNewName);
+    $newName = trim($newName);
     $newName = rtrim($newName, " ."); // 末尾のスペースやドットを除去
-    $oldExt = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
-    $newExt = strtolower(pathinfo($newName, PATHINFO_EXTENSION));
 
-    // 拡張子は元のファイルと同一に強制
-    if ($newExt !== "" && $newExt !== $oldExt) {
-        $newName = preg_replace('/\.[^\.]*$/', '', $newName) . '.' . $oldExt;
-    } elseif ($newExt === "" && $oldExt !== "") {
-        $newName = $newName . '.' . $oldExt;
-    }
+    $oldExt = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
 
     if ($newName !== "") {
-        // 不正な文字・Windows基底名の癖のチェック
-        $invalidReason = null;
-        if (strpos($newName, ':') !== false) {
-            $invalidReason = "コロン（:）を含むファイル名は使用できません。";
-        } elseif (strpos($newName, '.') === 0) {
-            $invalidReason = "ドットで始まるファイル名は使用できません。";
-        } elseif (!preg_match('/^[\w.\-\x{3040}-\x{30FF}\x{4E00}-\x{9FFF}\x{FF66}-\x{FFDC}]+$/u', $newName)) {
-            $invalidReason = "ファイル名に使用できない文字が含まれています。";
+        // 拡張子は元のファイルと同一に強制
+        $stem = rtrim($newName, "."); // 末尾ドットを除去してから拡張子を取り直す（二重ドットの防止）
+        $newExt = strtolower(pathinfo($stem, PATHINFO_EXTENSION));
+        if ($newExt !== "" && $newExt !== $oldExt) {
+            $newName = preg_replace('/\.[^\.]*$/', '', $stem) . '.' . $oldExt;
+        } elseif ($newExt === "" && $oldExt !== "") {
+            $newName = $stem . '.' . $oldExt;
+        } else {
+            $newName = $stem;
         }
 
-        if ($invalidReason !== null) {
-            $_SESSION['message'] = $invalidReason;
+        // クリーンアップ後にファイル名が空になった場合はエラーを返す（サイレントリダイレクトの防止）
+        if ($newName === "") {
+            $_SESSION['message'] = "ファイル名が空です。";
             $_SESSION['status'] = "error";
         } else {
+            // 不正な文字・Windows基底名の癖のチェック（アップロードと同じ検証）
+            $invalidReason = validateFilename($newName);
+            if ($invalidReason !== null) {
+                $_SESSION['message'] = $invalidReason;
+                $_SESSION['status'] = "error";
+            } else {
             $oldFilePath = $uploadDir . $filename;
             $newFilePath = $uploadDir . $newName;
 
@@ -130,20 +159,20 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["action"]) && $_POST["
                 $_SESSION['message'] = "ファイルが存在しないか、同じ名前のファイルが既に存在します。";
                 $_SESSION['status'] = "error";
             }
+            }
         }
+    } else {
+        // クリーンアップ後にファイル名が空になった場合（例: 末尾ドット/スペースのみ）
+        $_SESSION['message'] = "ファイル名が空です。末尾のスペースやドットは自動で除去されますが、除去後に何も残らないため名前を変更できません。";
+        $_SESSION['status'] = "error";
     }
-    header("Location: /uploader/index.php");
+    header('Location: ' . $script . '/index.php');
     exit;
 }
 
 // ファイルアップロード処理（複数対応）
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_FILES["files"])) {
     check_csrf();
-    // CSRF検証の後に post_max_size 超過を検出（POSTだがフォームデータが一切届いていない場合）
-    if (empty($_FILES) && empty($_POST)) {
-        $_SESSION['message'] = "アップロードに失敗しました。POSTデータのサイズが post_max_size を超えている可能性があります。";
-        $_SESSION['status'] = "error";
-    }
     $files = $_FILES["files"];
     $uploadedCount = 0;
     $errors = 0;
@@ -158,6 +187,15 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_FILES["files"])) {
         for ($i = 0; $i < $fileCount; $i++) {
             if ($files["error"][$i] === UPLOAD_ERR_OK) {
                 $origName = basename($files["name"][$i]);
+                $origName = trim($origName);
+                $origName = rtrim($origName, " ."); // 末尾のスペースやドットを除去
+                // ファイル名検証（許可文字 + Windows予約名）
+                $invalidName = validateFilename($origName);
+                if ($invalidName !== null) {
+                    $errors++;
+                    $errorList[] = "「" . $files["name"][$i] . "」: " . $invalidName;
+                    continue;
+                }
                 $ext = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
                 if (!in_array($ext, $allowedExts, true)) {
                     $errors++;
@@ -208,7 +246,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_FILES["files"])) {
         }
         $_SESSION['status'] = "error";
     }
-    header("Location: /uploader/index.php");
+    header('Location: ' . $script . '/index.php');
     exit;
 }
 
