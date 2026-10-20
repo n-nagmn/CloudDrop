@@ -325,8 +325,8 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_FILES["files"])) {
 }
 
 // サーバーのURLベースを取得（ホストヘッダ注入対策としてHTTP_HOSTを検証）
-$protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "http";
-$host = filter_var($_SERVER['HTTP_HOST'] ?? '', FILTER_VALIDATE_HOST) ?: 'localhost';
+$protocol = (($_SERVER['HTTPS'] ?? '') === 'on' || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https')) ? "https" : "http";
+$host = preg_match('/^(?:[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?|\[[0-9a-f:.]+\])(?::[0-9]{1,5})?$/i', $_SERVER['HTTP_HOST'] ?? '') ? $_SERVER['HTTP_HOST'] : 'localhost';
 $currentDir = dirname($_SERVER['PHP_SELF']);
 $baseUrl = $protocol . "://" . $host . rtrim($currentDir, '/') . "/uploads/";
 ?>
